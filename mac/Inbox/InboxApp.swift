@@ -86,6 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         web.setValue(false, forKey: "drawsBackground")
         web.allowsBackForwardNavigationGestures = false
         web.isHidden = true
+        // Trackpad pinch zooms the calendar's hours (the page decides whether the calendar is showing).
+        web.addGestureRecognizer(NSMagnificationGestureRecognizer(target: self, action: #selector(pinched(_:))))
 
         status = NSTextField(labelWithString: "Opening your inbox…")
         status.font = .systemFont(ofSize: 15, weight: .medium)
@@ -267,6 +269,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         p.standardError = p.standardOutput
         p.terminationHandler = { _ in DispatchQueue.main.async { self.load(); self.monitor?.poll() } }
         try? p.run()
+    }
+
+    private var lastMagnification: CGFloat = 0
+    @objc private func pinched(_ g: NSMagnificationGestureRecognizer) {
+        if g.state == .began { lastMagnification = 0 }
+        let step = g.magnification - lastMagnification
+        lastMagnification = g.magnification
+        guard g.state == .changed || g.state == .ended, abs(step) > 0.0001 else { return }
+        let p = g.location(in: web)
+        let y = web.isFlipped ? p.y : web.bounds.height - p.y // the page measures from the top
+        web.evaluateJavaScript("window.calPinch?.(\(1 + step), \(y))")
     }
 
     @objc private func reload() { if web.isHidden { restartServer() } else { web.reload() } }

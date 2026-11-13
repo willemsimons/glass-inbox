@@ -128,6 +128,10 @@ html.skybg .glass { background: linear-gradient(122deg, rgba(150,190,255,.08) 0,
 .adchip { display: block; width: 100%; text-align: left; padding: 2px 8px; border-radius: 999px; font: normal 500 12px var(--mono); color: var(--ink); background: oklch(62% .1 var(--h) / .34); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gutter { position: relative; height: var(--grid-h); }
 .hl { position: absolute; right: 8px; font-size: 11px; color: var(--dim); translate: 0 -50%; white-space: nowrap; }
+.hl.sub { font-size: 10px; opacity: .6; }
+.cev.thin { padding: 0; border-radius: 3px; }
+.calzoom { display: inline-flex; gap: 2px; margin-left: 6px; }
+.calzoom .act { min-width: 30px; }
 .dcol { position: relative; height: var(--grid-h); min-width: 0; -webkit-user-select: none; user-select: none; cursor: crosshair; touch-action: pan-x pan-y; }
 .cev { position: absolute; display: block; min-width: 0; padding: 4px 7px; text-align: left; font-size: 11.5px; line-height: 1.3; cursor: pointer; }
 .cev > * { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -355,7 +359,12 @@ button.send:disabled { filter: saturate(.4) brightness(.8); cursor: default; }
 .dgrid { --hour: 44px; border-top: 1px solid var(--grid); }
 .dh { padding: 6px 8px; border-left: 1px solid var(--grid); border-bottom: 1px solid var(--grid); }
 .dh:first-of-type, .dgrid > style + .dh { border-left: 0; border-bottom: 1px solid var(--grid); }
-.dcol { border-left: 1px solid var(--grid); background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hour) - 1px), var(--grid-soft) calc(var(--hour) - 1px), var(--grid-soft) var(--hour)); }
+/* The week title and the row of days stay put while the hours scroll under them. */
+.calview .chead { top: 0; z-index: 6; margin-inline: -16px; padding-inline: 22px; background: linear-gradient(rgba(14,22,42,.55), rgba(14,22,42,.4));
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+.calview .dh { position: sticky; top: var(--chead-h, 58px); z-index: 5; background: rgba(14,22,42,.42); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+.dcol { border-left: 1px solid var(--grid); background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hour) - 1px), var(--grid-soft) calc(var(--hour) - 1px), var(--grid-soft) var(--hour)),
+  repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--hour) / 2 - 1px), rgba(255,255,255,calc(.035 * var(--fine, 0))) calc(var(--hour) / 2 - 1px), rgba(255,255,255,calc(.035 * var(--fine, 0))) calc(var(--hour) / 2)); }
 .cev { padding: 1px 7px; overflow: hidden; border: 1px solid oklch(68% .1 var(--h) / .55); border-radius: 8px; background: oklch(60% .09 var(--h) / .28); box-shadow: inset 0 1px 0 rgba(255,255,255,.16); transition: background .15s; }
 .cev::before { display: none; }
 .cev:hover { background: oklch(60% .09 var(--h) / .42); }
@@ -692,7 +701,11 @@ const SEED = [
   {id:24,a:"personal",cat:"Spam",score:3,from:"Rewards Center",time:"Wed",subj:"You have won a gift card",why:"Looks like a scam.",body:"Claim your $500 gift card now. Offer ends tonight."}
 ];
 /* Sample calendar. Day 0 is Monday, Nov 2; s and m are minutes. The sample clock reads 2:05 PM. */
-const HOUR = 44, GRID_START = 7 * 60, GRID_END = 22 * 60, NOW = {day: 0, min: 14 * 60 + 5};
+/* The week shows the whole day; HOUR is how tall an hour is, which pinching changes (see calZoom). */
+const HOUR_MIN = 11, HOUR_MAX = 200, HOUR_DEFAULT = 44, GRID_START = 0, GRID_END = 24 * 60;
+let HOUR = HOUR_DEFAULT;
+try { const z = +localStorage.getItem("inbox-cal-hour"); if (z >= HOUR_MIN && z <= HOUR_MAX) HOUR = z; } catch {}
+const NOW = {day: 0, min: 14 * 60 + 5};
 const yes = (...names) => names.map(n => ({n, st: "Going"}));
 const ev = o => ({guests: [], repeat: "none", remind: "10", busy: "busy", allDay: false, loc: "", desc: "", invite: true, m: 60, ...o});
 const SEED_EVENTS = [
@@ -943,7 +956,9 @@ function placed(list) {
 }
 function weekHTML() {
   const days = Array.from({length: 7}, (_, i) => week * 7 + i), height = (GRID_END - GRID_START) / 60 * HOUR;
-  const hours = Array.from({length: (GRID_END - GRID_START) / 60 - 1}, (_, i) => GRID_START + (i + 1) * 60);
+  // How much detail fits: every few hours when folded, half and quarter hours when stretched.
+  const step = HOUR < 16 ? 360 : HOUR < 24 ? 180 : HOUR < 34 ? 120 : HOUR >= 150 ? 15 : HOUR >= 84 ? 30 : 60;
+  const hours = Array.from({length: Math.floor((GRID_END - GRID_START) / step) - 1}, (_, i) => GRID_START + (i + 1) * step);
   const y = min => (min - GRID_START) / 60 * HOUR;
   const head = days.map(day => {
     const d = dateOf(day), label = d.toLocaleDateString("en-US", {weekday: "short"}) + " " + d.getDate();
@@ -952,14 +967,14 @@ function weekHTML() {
   }).join("");
   const cols = days.map(day => {
     const cells = placed(dayEvents(day)).map(({e, lane, lanes}) => {
-      const top = y(Math.max(e.s, GRID_START)), h = Math.max(20, e.m / 60 * HOUR - 2), mine = e === draft;
-      return `<button class="cev ${isPast(e, day) && !mine ? "past" : ""} ${mine ? "on" : ""}" ${mine ? "" : `data-ev="${e.id}"`} style="--h:${accountHue(e.a)};top:${top}px;height:${h}px;left:${lane / lanes * 100}%;width:${100 / lanes}%">
-        <b>${attr(e.n) || "New event"}</b>${e.m >= 45 ? `<time>${clockFull(e.s)}</time>` : ""}${e.m >= 60 && e.guests.length ? `<small>${attr(guestNames(e))}</small>` : ""}</button>`;
+      const top = y(Math.max(e.s, GRID_START)), h = Math.max(HOUR < 24 ? 5 : 20, e.m / 60 * HOUR - 2), mine = e === draft;
+      return `<button class="cev ${isPast(e, day) && !mine ? "past" : ""} ${mine ? "on" : ""} ${h < 15 ? "thin" : ""}" ${mine ? "" : `data-ev="${e.id}"`} style="--h:${accountHue(e.a)};top:${top}px;height:${h}px;left:${lane / lanes * 100}%;width:${100 / lanes}%">
+        ${h >= 15 ? `<b>${attr(e.n) || "New event"}</b>` : ""}${h >= 33 ? `<time>${clockFull(e.s)}</time>` : ""}${h >= 48 && e.guests.length ? `<small>${attr(guestNames(e))}</small>` : ""}</button>`;
     }).join("");
     const now = day === NOW.day ? `<div class="nowline" style="top:${y(NOW.min)}px"></div>` : "";
     return `<div class="dcol" data-day="${day}">${cells}${now}</div>`;
   }).join("");
-  return `<div class="dh"></div>${head}<div class="gutter">${hours.map(h => `<span class="hl" style="top:${y(h)}px">${clockFull(h)}</span>`).join("")}</div>${cols}`.replace(/^/, `<style>.dgrid{--grid-h:${height}px}</style>`);
+  return `<div class="dh"></div>${head}<div class="gutter">${hours.map(h => `<span class="hl ${h % 60 ? "sub" : ""}" style="top:${y(h)}px">${clockFull(h)}</span>`).join("")}</div>${cols}`.replace(/^/, `<style>.dgrid{--grid-h:${height}px;--hour:${HOUR}px;--fine:${HOUR >= 84 ? 1 : 0}}</style>`);
 }
 function weekTitle() {
   const a = dateOf(week * 7), b = dateOf(week * 7 + 6), f = d => d.toLocaleDateString("en-US", {month: "short"});
@@ -998,13 +1013,67 @@ function editorHTML() {
 }
 function calHTML() {
   return `<div class="calwrap"><section class="calview" id="calview">
-    <div class="chead"><h1>${weekTitle()}</h1><div class="cnav"><button class="act" data-week="-1" aria-label="Previous week">‹</button><button class="act" data-today>Today</button><button class="act" data-week="1" aria-label="Next week">›</button></div><button class="join new" data-new>New event</button></div>
+    <div class="chead"><h1>${weekTitle()}</h1><div class="cnav"><button class="act" data-week="-1" aria-label="Previous week">‹</button><button class="act" data-today>Today</button><span class="calzoom"><button class="act" data-calzoom="-1" aria-label="Fold time (⌘−)" title="Fold time (⌘−)">−</button><button class="act" data-calzoom="1" aria-label="Stretch time (⌘+)" title="Stretch time (⌘+)">+</button></span><button class="act" data-week="1" aria-label="Next week">›</button></div><button class="join new" data-new>New event</button></div>
     <div class="dgrid" id="week">${weekHTML()}</div>
   </section>${editorHTML()}</div>`;
 }
 function paintWeek() { if ($("week")) $("week").innerHTML = weekHTML(); }
+/* Zoom the week like Photos: pinch out and the hours stretch, pinch in and the day folds up, and the time under your
+   fingers stays put. clientY is where to hold steady (the middle of the view when null). */
+function calZoomTo(next, clientY, animate) {
+  const view = $("calview"), grid = $("week");
+  if (!view || !grid) return;
+  next = Math.min(HOUR_MAX, Math.max(calFloor(), next));
+  if (Math.abs(next - HOUR) < .01) return;
+  const vr = view.getBoundingClientRect(), col = grid.querySelector(".dcol");
+  const at = clientY ?? vr.top + vr.height / 2;
+  const top = col ? col.getBoundingClientRect().top : vr.top;
+  const minute = (at - top) / HOUR * 60; // the time under the pointer
+  HOUR = next;
+  paintWeek();
+  const newTop = (col ? grid.querySelector(".dcol").getBoundingClientRect().top : vr.top);
+  view.scrollTop += newTop + minute / 60 * HOUR - at;
+  try { localStorage.setItem("inbox-cal-hour", String(Math.round(HOUR * 10) / 10)); } catch {}
+}
+// Folded all the way, the whole day fits the screen exactly.
+function calFloor() {
+  const view = $("calview"), head = view?.querySelector(".chead"), days = $("week")?.querySelector(".dh");
+  if (!view) return HOUR_MIN;
+  const room = view.clientHeight - (head?.offsetHeight || 0) - (days?.offsetHeight || 0) - 24;
+  return Math.max(HOUR_MIN, room / 24);
+}
+function fitCalHeader() {
+  const view = $("calview"), head = view?.querySelector(".chead");
+  if (head) view.style.setProperty("--chead-h", head.offsetHeight + "px");
+  if (view && HOUR < calFloor()) { HOUR = calFloor(); paintWeek(); }
+}
+let calAnim = null;
+function calZoomBy(factor, clientY, animate) {
+  if (!animate) return calZoomTo(HOUR * factor, clientY);
+  cancelAnimationFrame(calAnim);
+  const from = HOUR, to = Math.min(HOUR_MAX, Math.max(calFloor(), HOUR * factor)), t0 = performance.now();
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const tick = now => {
+    const t = reduce ? 1 : Math.min(1, (now - t0) / 260), e = 1 - Math.pow(1 - t, 3);
+    calZoomTo(from * Math.pow(to / from, e), clientY);
+    if (t < 1) calAnim = requestAnimationFrame(tick);
+  };
+  calAnim = requestAnimationFrame(tick);
+}
+// Trackpad pinch: Chrome sends ctrl+wheel; Safari and the Mac app send gesture events.
+document.addEventListener("wheel", e => {
+  if (!e.ctrlKey || view !== "calendar" || !e.target.closest?.("#calview")) return;
+  e.preventDefault();
+  calZoomBy(Math.exp(-e.deltaY * 0.012), e.clientY);
+}, {passive: false});
+let pinchFrom = null;
+// The Mac app sends its own pinch (window.calPinch) so the two never double up.
+window.calPinch = (factor, clientY) => { if (view === "calendar") calZoomBy(factor, clientY); };
+document.addEventListener("gesturestart", e => { if (!document.documentElement.classList.contains("mac-app") && view === "calendar" && e.target.closest?.("#calview")) { e.preventDefault(); pinchFrom = HOUR; } });
+document.addEventListener("gesturechange", e => { if (pinchFrom != null) { e.preventDefault(); calZoomTo(pinchFrom * e.scale, e.clientY); } });
+document.addEventListener("gestureend", e => { if (pinchFrom != null) { e.preventDefault(); pinchFrom = null; } });
 function newDraft(day, s, m) {
-  draft = ev({id: nextEvent++, isNew: true, day, s, m, a: acct === "all" ? "work" : acct, n: draft?.isNew ? draft.n : ""});
+  draft = ev({id: nextEvent++, isNew: true, day, s, m, a: acct === "all" ? (ACCOUNTS[1]?.[0] ?? "work") : acct, n: draft?.isNew ? draft.n : ""});
 }
 function openDraftEditor() { render(); $("f-title")?.focus(); }
 function addGuest() {
@@ -1077,7 +1146,7 @@ function settingsHTML() {
 }
 
 function openComposer() {
-  composing = composing || {from: acct === "all" ? "work" : acct, to: "", cc: "", subj: "", body: "", showCc: false};
+  composing = composing || {from: acct === "all" ? (ACCOUNTS[1]?.[0] ?? "work") : acct, to: "", cc: "", subj: "", body: "", showCc: false};
   paintComposer(); $(composing.to ? "c-body" : "c-to").focus();
 }
 function closeComposer() { composing = null; $("composer").hidden = true; $("composer").innerHTML = ""; }
@@ -1249,6 +1318,7 @@ function paintTabs() {
   }).join("");
 }
 
+let lastView = null;
 function render() {
   paintTabs();
   const list = shown();
@@ -1271,7 +1341,13 @@ function render() {
   $("glass").classList.toggle("newsv", view === "news");
   $("setbtn").innerHTML = `${svg(GEAR)}<span class="lbl">Settings</span>`;
   $("setbtn").classList.toggle("on", view === "settings");
-  if ($("calview")) $("calview").scrollTop = keepCal;
+  if ($("calview")) {
+    fitCalHeader();
+    // Opening the calendar starts a little before now (or at 7 AM), not at midnight.
+    if (lastView !== "calendar") $("calview").scrollTop = Math.max(0, (Math.min(NOW.min - 90, 7 * 60) - GRID_START) / 60 * HOUR);
+    else $("calview").scrollTop = keepCal;
+  }
+  lastView = view;
   $("glass").classList.toggle("cal", view !== "mail" && view !== "news");
   $("calbtn").innerHTML = `${ICONS.calendar}<span class="lbl">Calendar</span>`;
   $("inboxbtn").innerHTML = `${ICONS.inbox}<span class="lbl">Inbox</span>`;
@@ -1314,6 +1390,7 @@ document.addEventListener("click", e => {
   else if ("view" in d) toggleView();
   else if (d.week) { week += +d.week; draft = null; render(); }
   else if ("today" in d) { week = 0; draft = null; render(); }
+  else if (d.calzoom) calZoomBy(+d.calzoom > 0 ? 1.5 : 1 / 1.5, null, true);
   else if ("new" in d) { newDraft(week === 0 ? NOW.day : week * 7, week === 0 ? 15 * 60 : 10 * 60, 60); openDraftEditor(); }
   else if (d.ev) { const found = events.find(x => x.id === +d.ev); draft = {...found, guests: found.guests.map(g => ({...g}))}; render(); }
   else if ("addmeet" in d) { const code = n => Array.from({length: n}, () => "abcdefghijkmnopqrstuvwxyz"[Math.floor(Math.random() * 25)]).join(""); draft.via = "Google Meet"; draft.code = `${code(3)}-${code(4)}-${code(3)}`; render(); }
@@ -1380,6 +1457,10 @@ document.addEventListener("keydown", e => {
   if (e.target.id === "search" && e.key === "Enter") { e.preventDefault(); searchAll(search.trim()); return; }
   if (e.target.id === "search" && e.key === "Escape") { search = ""; searchHits = null; render(); return; }
   if (e.key === "/" && !e.target.matches("textarea, input, select")) { e.preventDefault(); $("search")?.focus(); return; }
+  if (view === "calendar" && (e.metaKey || e.ctrlKey) && ["=", "+", "-", "0"].includes(e.key)) {
+    e.preventDefault();
+    return e.key === "0" ? calZoomBy(HOUR_DEFAULT / HOUR, null, true) : calZoomBy(e.key === "-" ? 1 / 1.5 : 1.5, null, true);
+  }
   if ((e.metaKey || e.ctrlKey) && (e.key === "[" || e.key === "]") && !e.target.matches?.("textarea, input, select")) {
     e.preventDefault(); return goHistory(e.key === "[" ? -1 : 1);
   }
